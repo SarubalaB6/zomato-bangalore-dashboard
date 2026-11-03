@@ -236,9 +236,11 @@ Question: {question}"""
                         time.sleep(3 * (attempt + 1))
                     else:
                         st.warning("The AI service is very busy. Please try again in a minute.")
-                elif "429" in msg:
-                    st.warning("Too many questions right now. Please wait a minute and try again.")
-                    st.caption(msg[300:900])
+                                elif "429" in msg:
+                    if "per day" in msg:
+                        st.warning("Today's free AI limit is used up. Please try again later.")
+                    else:
+                        st.warning("Too many questions. Please wait a minute and try again.")
                     break
                 else:
                     st.error(f"Gemini error: {e}")
