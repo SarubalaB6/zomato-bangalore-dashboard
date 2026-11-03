@@ -238,7 +238,7 @@ Question: {question}"""
                         st.warning("The AI service is very busy. Please try again in a minute.")
                 elif "429" in msg:
                     st.warning("Too many questions right now. Please wait a minute and try again.")
-                    st.caption(msg[:400])
+                    st.caption(msg[300:900])
                     break
                 else:
                     st.error(f"Gemini error: {e}")
