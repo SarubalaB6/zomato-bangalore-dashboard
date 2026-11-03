@@ -13,15 +13,19 @@ px.defaults.template = "plotly_white"
 px.defaults.color_discrete_sequence = ["#E23744"]
 px.defaults.color_continuous_scale = "Reds"
 
-st.set_page_config(page_title="Bangalore Restaurants Dashboard", page_icon="🍽️", layout="wide")
+st.set_page_config(
+    page_title="Bangalore Restaurants Dashboard",
+    page_icon="🍽️",
+    layout="wide",
+)
 
 
 @st.cache_data
 def load_data():
     conn = sqlite3.connect("dataset/zomato.db")
-    df = pd.read_sql_query("SELECT * FROM restaurants", conn)
+    data = pd.read_sql_query("SELECT * FROM restaurants", conn)
     conn.close()
-    return df
+    return data
 
 
 df = load_data()
@@ -60,75 +64,113 @@ left, right = st.columns(2)
 
 top_areas = f["location"].value_counts().head(10).reset_index()
 top_areas.columns = ["location", "restaurants"]
-fig1 = px.bar(top_areas, x="restaurants", y="location", orientation="h",
-              title="Top 10 areas by number of restaurants")
+fig1 = px.bar(
+    top_areas,
+    x="restaurants",
+    y="location",
+    orientation="h",
+    title="Top 10 areas by number of restaurants",
+)
 fig1.update_yaxes(autorange="reversed")
 left.plotly_chart(fig1)
 
-types = (f.groupby("rest_type")
-          .agg(restaurants=("name", "count"), avg_cost=("cost_for_two", "mean"))
-          .reset_index()
-          .sort_values("restaurants", ascending=False)
-          .head(10))
-fig2 = px.bar(types, x="rest_type", y="restaurants", color="avg_cost",
-              title="Restaurant types (colour = average cost)")
+types = f.groupby("rest_type").agg(
+    restaurants=("name", "count"),
+    avg_cost=("cost_for_two", "mean"),
+)
+types = types.reset_index()
+types = types.sort_values("restaurants", ascending=False).head(10)
+fig2 = px.bar(
+    types,
+    x="rest_type",
+    y="restaurants",
+    color="avg_cost",
+    title="Restaurant types (colour = average cost)",
+)
 right.plotly_chart(fig2)
 
 left2, right2 = st.columns(2)
 
-fig3 = px.scatter(f, x="cost_for_two", y="rate", size="votes", hover_name="name",
-                  title="Cost vs rating (bubble size = votes)")
+fig3 = px.scatter(
+    f,
+    x="cost_for_two",
+    y="rate",
+    size="votes",
+    hover_name="name",
+    title="Cost vs rating (bubble size = votes)",
+)
 left2.plotly_chart(fig3)
 
 right2.subheader("Top rated restaurants (500+ votes)")
-top = (f[f["votes"] >= 500]
-       .sort_values(["rate", "votes"], ascending=False)
-       .head(10)[["name", "location", "rate", "votes"]])
+top = f[f["votes"] >= 500]
+top = top.sort_values(["rate", "votes"], ascending=False)
+top = top.head(10)[["name", "location", "rate", "votes"]]
 right2.dataframe(top, hide_index=True)
 
 # ---------- Cuisines and Hidden gems ----------
 st.divider()
 a, b = st.columns(2)
 
-cuisine_df = f.assign(cuisine=f["cuisines"].str.split(", ")).explode("cuisine")
+cuisine_df = f.assign(cuisine=f["cuisines"].str.split(", "))
+cuisine_df = cuisine_df.explode("cuisine")
 cuisine_df = cuisine_df.dropna(subset=["cuisine"])
-cuisine_stats = (cuisine_df.groupby("cuisine")
-                 .agg(restaurants=("name", "count"), avg_rating=("rate", "mean"), avg_cost=("cost_for_two", "mean"))
-                 .query("restaurants >= 30").round(2)
-                 .sort_values("avg_rating", ascending=False).head(15))
+cuisine_stats = cuisine_df.groupby("cuisine").agg(
+    restaurants=("name", "count"),
+    avg_rating=("rate", "mean"),
+    avg_cost=("cost_for_two", "mean"),
+)
+cuisine_stats = cuisine_stats[cuisine_stats["restaurants"] >= 30].round(2)
+cuisine_stats = cuisine_stats.sort_values("avg_rating", ascending=False)
+cuisine_stats = cuisine_stats.head(15)
 
-fig4 = px.bar(cuisine_stats.head(10).reset_index(), x="avg_rating", y="cuisine", orientation="h",
-              title="Top cuisines by average rating (30+ restaurants)")
+fig4 = px.bar(
+    cuisine_stats.head(10).reset_index(),
+    x="avg_rating",
+    y="cuisine",
+    orientation="h",
+    title="Top cuisines by average rating (30+ restaurants)",
+)
 fig4.update_yaxes(autorange="reversed")
 a.plotly_chart(fig4)
 
 b.subheader("💎 Hidden gems (4.0+ rating, under 500 votes)")
-gems = (f[(f["rate"] >= 4.0) & (f["votes"] < 500)]
-        .sort_values("rate", ascending=False)
-        .head(10)[["name", "location", "rate", "votes", "cost_for_two"]])
+gems = f[(f["rate"] >= 4.0) & (f["votes"] < 500)]
+gems = gems.sort_values("rate", ascending=False)
+gems = gems.head(10)[["name", "location", "rate", "votes", "cost_for_two"]]
 b.dataframe(gems, hide_index=True)
 
 # ---------- Best areas to open a new restaurant ----------
 st.divider()
 st.subheader("🏆 Best areas to open a new restaurant")
-st.caption("Areas with above-average ratings but fewer restaurants, so less competition (20+ restaurants).")
+st.caption(
+    "Areas with above-average ratings but fewer restaurants "
+    "(less competition). Only areas with 20+ restaurants."
+)
 
 overall_rating = f["rate"].mean()
-opportunity = (f.groupby("location")
-               .agg(restaurants=("name", "count"), avg_rating=("rate", "mean"), avg_cost=("cost_for_two", "mean"))
-               .round(2)
-               .query("restaurants >= 20"))
-opportunity = (opportunity[opportunity["avg_rating"] >= overall_rating]
-               .sort_values("restaurants")
-               .head(10)
-               .reset_index())
+opportunity = f.groupby("location").agg(
+    restaurants=("name", "count"),
+    avg_rating=("rate", "mean"),
+    avg_cost=("cost_for_two", "mean"),
+)
+opportunity = opportunity.round(2)
+opportunity = opportunity[opportunity["restaurants"] >= 20]
+opportunity = opportunity[opportunity["avg_rating"] >= overall_rating]
+opportunity = opportunity.sort_values("restaurants").head(10)
+opportunity = opportunity.reset_index()
 
 if opportunity.empty:
-    st.info("Not enough areas for this view with the current filters. Try clearing the Area filter.")
+    st.info("Not enough areas for this view. Try clearing the Area filter.")
 else:
     o1, o2 = st.columns(2)
-    fig5 = px.bar(opportunity, x="restaurants", y="location", orientation="h",
-                  color="avg_rating", title="Fewest restaurants among well-rated areas")
+    fig5 = px.bar(
+        opportunity,
+        x="restaurants",
+        y="location",
+        orientation="h",
+        color="avg_rating",
+        title="Fewest restaurants among well-rated areas",
+    )
     fig5.update_yaxes(autorange="reversed")
     o1.plotly_chart(fig5)
     o2.dataframe(opportunity, hide_index=True)
@@ -142,16 +184,17 @@ cuisine_options = sorted(cuisine_df["cuisine"].unique())
 chosen_cuisine = r1.selectbox("Cuisine", cuisine_options)
 budget = r2.slider("Maximum cost for two (₹)", 100, 3000, 800, 50)
 
-picks = (cuisine_df[(cuisine_df["cuisine"] == chosen_cuisine) & (cuisine_df["cost_for_two"] <= budget)]
-         .sort_values(["rate", "votes"], ascending=False)
-         .head(10)[["name", "location", "rate", "votes", "cost_for_two"]])
+picks = cuisine_df[cuisine_df["cuisine"] == chosen_cuisine]
+picks = picks[picks["cost_for_two"] <= budget]
+picks = picks.sort_values(["rate", "votes"], ascending=False)
+picks = picks.head(10)[["name", "location", "rate", "votes", "cost_for_two"]]
 
 if picks.empty:
-    st.info("No restaurants found. Try a higher budget or a different cuisine.")
+    st.info("No restaurants found. Try a higher budget or another cuisine.")
 else:
     st.dataframe(picks, hide_index=True)
 
-    # ---------- Ask your data (Gemini) ----------
+# ---------- Ask your data (Gemini) ----------
 st.divider()
 st.subheader("🤖 Ask your data")
 
@@ -235,12 +278,12 @@ Question: {question}"""
                     if attempt < 2:
                         time.sleep(3 * (attempt + 1))
                     else:
-                        st.warning("The AI service is very busy. Please try again in a minute.")
-                                elif "429" in msg:
+                        st.warning("The AI service is very busy. Try again in a minute.")
+                elif "429" in msg:
                     if "per day" in msg:
-                        st.warning("Today's free AI limit is used up. Please try again later.")
+                        st.warning("Today's free AI limit is used up. Try again later.")
                     else:
-                        st.warning("Too many questions. Please wait a minute and try again.")
+                        st.warning("Too many questions. Please wait a minute.")
                     break
                 else:
                     st.error(f"Gemini error: {e}")
