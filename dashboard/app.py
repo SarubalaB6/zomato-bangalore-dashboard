@@ -91,6 +91,7 @@ st.divider()
 a, b = st.columns(2)
 
 cuisine_df = f.assign(cuisine=f["cuisines"].str.split(", ")).explode("cuisine")
+cuisine_df = cuisine_df.dropna(subset=["cuisine"])
 cuisine_stats = (cuisine_df.groupby("cuisine")
                  .agg(restaurants=("name", "count"), avg_rating=("rate", "mean"), avg_cost=("cost_for_two", "mean"))
                  .query("restaurants >= 30").round(2)
@@ -107,32 +108,91 @@ gems = (f[(f["rate"] >= 4.0) & (f["votes"] < 500)]
         .head(10)[["name", "location", "rate", "votes", "cost_for_two"]])
 b.dataframe(gems, hide_index=True)
 
-# ---------- Ask your data (Gemini) ----------
+# ---------- Best areas to open a new restaurant ----------
+st.divider()
+st.subheader("🏆 Best areas to open a new restaurant")
+st.caption("Areas with above-average ratings but fewer restaurants, so less competition (20+ restaurants).")
+
+overall_rating = f["rate"].mean()
+opportunity = (f.groupby("location")
+               .agg(restaurants=("name", "count"), avg_rating=("rate", "mean"), avg_cost=("cost_for_two", "mean"))
+               .round(2)
+               .query("restaurants >= 20"))
+opportunity = (opportunity[opportunity["avg_rating"] >= overall_rating]
+               .sort_values("restaurants")
+               .head(10)
+               .reset_index())
+
+if opportunity.empty:
+    st.info("Not enough areas for this view with the current filters. Try clearing the Area filter.")
+else:
+    o1, o2 = st.columns(2)
+    fig5 = px.bar(opportunity, x="restaurants", y="location", orientation="h",
+                  color="avg_rating", title="Fewest restaurants among well-rated areas")
+    fig5.update_yaxes(autorange="reversed")
+    o1.plotly_chart(fig5)
+    o2.dataframe(opportunity, hide_index=True)
+
+# ---------- Restaurant recommender ----------
+st.divider()
+st.subheader("🎯 Restaurant recommender")
+
+r1, r2 = st.columns(2)
+cuisine_options = sorted(cuisine_df["cuisine"].unique())
+chosen_cuisine = r1.selectbox("Cuisine", cuisine_options)
+budget = r2.slider("Maximum cost for two (₹)", 100, 3000, 800, 50)
+
+picks = (cuisine_df[(cuisine_df["cuisine"] == chosen_cuisine) & (cuisine_df["cost_for_two"] <= budget)]
+         .sort_values(["rate", "votes"], ascending=False)
+         .head(10)[["name", "location", "rate", "votes", "cost_for_two"]])
+
+if picks.empty:
+    st.info("No restaurants found. Try a higher budget or a different cuisine.")
+else:
+    st.dataframe(picks, hide_index=True)
+
+    # ---------- Ask your data (Gemini) ----------
 st.divider()
 st.subheader("🤖 Ask your data")
 
-question = st.text_input("Ask a question about these restaurants",
-                         placeholder="Which cuisine has the best ratings?")
+question = st.text_input(
+    "Ask a question about these restaurants",
+    placeholder="Which cuisine has the best ratings?",
+)
+
+
+def summarize(data, column, min_count, top_n, sort_by):
+    stats = data.groupby(column).agg(
+        restaurants=("name", "count"),
+        avg_rating=("rate", "mean"),
+        avg_cost=("cost_for_two", "mean"),
+    )
+    stats = stats[stats["restaurants"] >= min_count].round(2)
+    return stats.sort_values(sort_by, ascending=False).head(top_n)
+
 
 if st.button("Ask") and question:
+    wait_left = 15 - (time.time() - st.session_state.get("last_ask", 0))
+    if wait_left > 0:
+        st.info(f"Please wait {wait_left:.0f} more seconds.")
+        st.stop()
+    st.session_state["last_ask"] = time.time()
+
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        st.error("GEMINI_API_KEY not found. Check your .env file.")
-    else:
-        area_stats = (f.groupby("location")
-                      .agg(restaurants=("name", "count"), avg_rating=("rate", "mean"), avg_cost=("cost_for_two", "mean"))
-                      .query("restaurants >= 20").round(2)
-                      .sort_values("avg_rating", ascending=False).head(15))
-        type_stats = (f.groupby("rest_type")
-                      .agg(restaurants=("name", "count"), avg_rating=("rate", "mean"), avg_cost=("cost_for_two", "mean"))
-                      .query("restaurants >= 20").round(2)
-                      .sort_values("restaurants", ascending=False).head(10))
-        booking_stats = f.groupby("book_table").agg(avg_rating=("rate", "mean"), avg_cost=("cost_for_two", "mean")).round(2)
-        online_stats = f.groupby("online_order").agg(avg_rating=("rate", "mean"), avg_cost=("cost_for_two", "mean")).round(2)
-        top_names = f.sort_values(["rate", "votes"], ascending=False).head(10)[["name", "location", "rate", "votes"]]
+        st.error("GEMINI_API_KEY not found. Check .env or Streamlit secrets.")
+        st.stop()
 
-        prompt = f"""You are a data analyst for Bangalore restaurant data.
-Answer the question using ONLY the summary below. If the summary can't answer it, say so.
+    area_stats = summarize(f, "location", 20, 15, "avg_rating")
+    type_stats = summarize(f, "rest_type", 20, 10, "restaurants")
+    booking_stats = summarize(f, "book_table", 0, 5, "restaurants")
+    online_stats = summarize(f, "online_order", 0, 5, "restaurants")
+    top_names = f.sort_values(["rate", "votes"], ascending=False)
+    top_names = top_names.head(10)[["name", "location", "rate", "votes"]]
+
+    prompt = f"""You are a data analyst for Bangalore restaurant data.
+Answer the question using ONLY the summary below.
+If the summary can't answer it, say so.
 Keep the answer short and clear.
 
 Total restaurants: {len(f)}
@@ -159,19 +219,29 @@ Top rated restaurants:
 
 Question: {question}"""
 
-        client = genai.Client(api_key=api_key)
-        answer = None
-        with st.spinner("Thinking..."):
-            for attempt in range(3):
-                try:
-                    resp = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
-                    answer = resp.text
-                    break
-                except Exception as e:
-                    if "503" in str(e) and attempt < 2:
-                        time.sleep(3)
+    client = genai.Client(api_key=api_key)
+    answer = None
+    with st.spinner("Thinking..."):
+        for attempt in range(3):
+            try:
+                resp = client.models.generate_content(
+                    model="gemini-3.8-flash", contents=prompt
+                )
+                answer = resp.text
+                break
+            except Exception as e:
+                msg = str(e)
+                if "503" in msg:
+                    if attempt < 2:
+                        time.sleep(3 * (attempt + 1))
                     else:
-                        st.error(f"Gemini error: {e}")
-                        break
-        if answer:
-            st.write(answer)
+                        st.warning("The AI service is very busy. Please try again in a minute.")
+                elif "429" in msg:
+                    st.warning("Too many questions right now. Please wait a minute and try again.")
+                    st.caption(msg[:400])
+                    break
+                else:
+                    st.error(f"Gemini error: {e}")
+                    break
+    if answer:
+        st.write(answer)
