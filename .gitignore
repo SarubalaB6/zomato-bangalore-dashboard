@@ -1,0 +1,4 @@
+.env
+dataset/zomato.db
+dataset/archive/
+__pycache__/
